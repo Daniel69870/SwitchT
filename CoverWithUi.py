@@ -1,25 +1,30 @@
 import keyboard
 import subprocess
 import pygetwindow as gw
-import time
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 CONFIG_FILE = "config.json"
 
-# === DEFAULT CONFIG ===
 config = {
     "hotkey": "shift+f",
-    "apps": ["notepad.exe", "chrome.exe"]
+    "hide_apps": [],
+    "show_apps": ["notepad.exe"]
 }
 
-# === LOAD CONFIG ===
+current_hotkey = None
+
+# === LOAD / SAVE ===
 def load_config():
     global config
     try:
         with open(CONFIG_FILE, "r") as f:
-            config = json.load(f)
+            loaded = json.load(f)
+
+        config["hotkey"] = loaded.get("hotkey", config["hotkey"])
+        config["hide_apps"] = loaded.get("hide_apps", [])
+        config["show_apps"] = loaded.get("show_apps", loaded.get("apps", config["show_apps"]))
     except:
         pass
 
@@ -27,57 +32,122 @@ def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
 
-# === FUNCTIONALITY ===
-def minimize_all():
-    keyboard.send("windows+d")
+# === WINDOW CONTROL ===
+def find_window(keyword):
+    for w in gw.getAllWindows():
+        if keyword.lower() in w.title.lower():
+            return w
+    return None
 
-def open_apps():
-    for app in config["apps"]:
+def focus_maximize(keyword):
+    win = find_window(keyword)
+    if win:
         try:
-            subprocess.Popen(app)
-        except Exception as e:
-            print(f"Error opening {app}: {e}")
-
-def focus_existing_window(keyword):
-    windows = gw.getWindowsWithTitle(keyword)
-    if windows:
-        try:
-            windows[0].activate()
+            win.restore()
+            win.activate()
+            win.maximize()
             return True
         except:
             pass
     return False
 
-def panic_switch():
-    print("Switching to study mode...")
-    minimize_all()
-    time.sleep(0.3)
+def minimize_window(keyword):
+    win = find_window(keyword)
+    if win:
+        try:
+            win.minimize()
+        except:
+            pass
 
-    if not focus_existing_window("Chrome"):
-        open_apps()
+# === CORE ===
+def minimize_all():
+    keyboard.send("windows+d")
 
-# === HOTKEY SETUP ===
-def apply_hotkey():
-    keyboard.unhook_all_hotkeys()
+def open_app(app):
     try:
-        keyboard.add_hotkey(config["hotkey"], panic_switch)
-        status_label.config(text=f"Hotkey set: {config['hotkey']}")
+        subprocess.Popen(app)
+    except:
+        pass
+
+def panic_switch():
+    print("Switching mode...")
+
+    minimize_all()
+
+    for app in config["hide_apps"]:
+        minimize_window(app.replace(".exe", ""))
+
+    for app in config["show_apps"]:
+        name = app.replace(".exe", "")
+        if not focus_maximize(name):
+            open_app(app)
+
+# === HOTKEY ===
+def apply_hotkey():
+    global current_hotkey
+
+    if current_hotkey:
+        try:
+            keyboard.remove_hotkey(current_hotkey)
+        except:
+            pass
+
+    try:
+        current_hotkey = keyboard.add_hotkey(config["hotkey"], panic_switch)
+        status_label.config(text=f"Hotkey: {config['hotkey']}")
     except:
         messagebox.showerror("Error", "Invalid hotkey")
 
-# === UI ===
-def add_app():
-    file_path = filedialog.askopenfilename()
-    if file_path:
-        config["apps"].append(file_path)
-        app_list.insert(tk.END, file_path)
+# === MOVE LOGIC ===
+def move_to_hide():
+    sel = show_list.curselection()
+    if sel:
+        i = sel[0]
+        item = config["show_apps"].pop(i)
+        config["hide_apps"].append(item)
+        refresh_lists()
 
-def remove_app():
-    selected = app_list.curselection()
-    if selected:
-        index = selected[0]
-        config["apps"].pop(index)
-        app_list.delete(index)
+def move_to_show():
+    sel = hide_list.curselection()
+    if sel:
+        i = sel[0]
+        item = config["hide_apps"].pop(i)
+        config["show_apps"].append(item)
+        refresh_lists()
+
+def refresh_lists():
+    hide_list.delete(0, tk.END)
+    for app in config["hide_apps"]:
+        hide_list.insert(tk.END, app)
+
+    show_list.delete(0, tk.END)
+    for app in config["show_apps"]:
+        show_list.insert(tk.END, app)
+
+# === UI ACTIONS ===
+def add_hide():
+    f = filedialog.askopenfilename()
+    if f:
+        config["hide_apps"].append(f)
+        refresh_lists()
+
+def add_show():
+    f = filedialog.askopenfilename()
+    if f:
+        config["show_apps"].append(f)
+        refresh_lists()
+
+def remove_hide():
+    sel = hide_list.curselection()
+    if sel:
+        config["hide_apps"].pop(sel[0])
+        refresh_lists()
+
+def remove_show():
+    sel = show_list.curselection()
+    if sel:
+        config["show_apps"].pop(sel[0])
+        refresh_lists()
 
 def update_hotkey():
     config["hotkey"] = hotkey_entry.get()
@@ -85,44 +155,66 @@ def update_hotkey():
 
 def save_all():
     save_config()
-    messagebox.showinfo("Saved", "Configuration saved!")
+    messagebox.showinfo("Saved", "Config saved!")
 
-# === BUILD UI ===
+# === UI ===
 load_config()
 
 root = tk.Tk()
-root.title("Panic Switch Config")
-root.geometry("400x400")
+root.title("Mode Switch Tool")
+root.geometry("550x450")
 
-# Hotkey
-tk.Label(root, text="Hotkey:").pack()
+# HOTKEY
+tk.Label(root, text="Hotkey").pack()
+
 hotkey_entry = tk.Entry(root)
 hotkey_entry.insert(0, config["hotkey"])
 hotkey_entry.pack()
 
 tk.Button(root, text="Apply Hotkey", command=update_hotkey).pack(pady=5)
 
-# Apps list
-tk.Label(root, text="Applications:").pack()
+frame = tk.Frame(root)
+frame.pack(fill=tk.BOTH, expand=True)
 
-app_list = tk.Listbox(root)
-app_list.pack(fill=tk.BOTH, expand=True)
+# LEFT
+left = tk.Frame(frame)
+left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-for app in config["apps"]:
-    app_list.insert(tk.END, app)
+tk.Label(left, text="Hide Apps").pack()
 
-tk.Button(root, text="Add App", command=add_app).pack(pady=2)
-tk.Button(root, text="Remove Selected", command=remove_app).pack(pady=2)
+hide_list = tk.Listbox(left)
+hide_list.pack(fill=tk.BOTH, expand=True)
 
-# Save
+tk.Button(left, text="Add", command=add_hide).pack()
+tk.Button(left, text="Remove", command=remove_hide).pack()
+
+# CENTER BUTTONS
+center = tk.Frame(frame)
+center.pack(side=tk.LEFT, fill=tk.Y)
+
+tk.Button(center, text="→ Move to Hide", command=move_to_hide).pack(pady=10)
+tk.Button(center, text="← Move to Show", command=move_to_show).pack(pady=10)
+
+# RIGHT
+right = tk.Frame(frame)
+right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+tk.Label(right, text="Show Apps").pack()
+
+show_list = tk.Listbox(right)
+show_list.pack(fill=tk.BOTH, expand=True)
+
+tk.Button(right, text="Add", command=add_show).pack()
+tk.Button(right, text="Remove", command=remove_show).pack()
+
+# SAVE
 tk.Button(root, text="Save Config", command=save_all).pack(pady=10)
 
-# Status
 status_label = tk.Label(root, text="")
 status_label.pack()
 
+refresh_lists()
 apply_hotkey()
 
-print("Running in background...")
-
+print("Running...")
 root.mainloop()
