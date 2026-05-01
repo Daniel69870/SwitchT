@@ -2,8 +2,7 @@
 Configurable overlay to cover what you're doing
 
 Module Installs:
-      [pip install keyboard]
-      [pip install pygetwindow]
+pip install keyboard pygetwindow pywin32
 
 Modules already included with Python:
 tkinter
